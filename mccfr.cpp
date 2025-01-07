@@ -8,20 +8,23 @@ using namespace std;
 
 // put money in, don't put money in
 const int NUM_MOVES = 2;
-const int epochs = 100000;
-const double ACCEPTABLE_ERROR = 0.05;
+const double ACCEPTABLE_ERROR = 0.025;
+const int SAMPLES = 100;
+const int MAX_EPOCHS = 10000000;
 map<string, array<double, NUM_MOVES>> strat;
-map<string, array<double, NUM_MOVES>> avg_strat;
 map<string, array<double, NUM_MOVES>> regrets;
+map<string, array<double, NUM_MOVES>> sum_strat;
+map<string, array<double, NUM_MOVES>> avg_strat;
 string deck = "JQK";
 bool verbose = false;
-bool CFR_PLUS = true;
+bool CFR_PLUS = false;
+bool LCFR = false;
 
-
-void print_arr(array<double, NUM_MOVES> arr) {
-    for (int i = 0; i < 3; i++)
-        cout << arr[i] << " ";
-    cout << endl;
+void reset() {
+    strat.clear();
+    sum_strat.clear();
+    avg_strat.clear();
+    regrets.clear();
 }
 
 string p1_infoset(string history) {
@@ -178,7 +181,7 @@ double get_strat_prob(string infostate, char action) {
     return avg_strat[infostate][ac];
 }
 bool within_acceptable_error(string infostate, char action, double b) {
-    cout << abs(get_strat_prob(infostate, action)-b) << endl;
+    //cout << abs(get_strat_prob(infostate, action)-b) << endl;
     return abs(get_strat_prob(infostate, action)-b) < ACCEPTABLE_ERROR;
 }
 
@@ -227,19 +230,13 @@ bool close_to_nash() {
         return false;
 
     return true;
-    
 }
 
-
-int main() {
-    
-    std::random_device rd;
-    std::mt19937 g(rd());
-    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-    srand(seed);
-    int score = 0;
+int train(std::mt19937 g) {
     bool am_player1 = true;
-    for (int i = 0; i < epochs; i++) {
+    int epochs;
+    reset();
+    for (epochs = 0; epochs < MAX_EPOCHS; epochs++) {
         update_strat();
         // cout << strat.size() << endl;
         if (verbose) {
@@ -248,7 +245,7 @@ int main() {
         }
         for (auto j = strat.begin(); j != strat.end(); j++) {
             for (int k = 0; k < NUM_MOVES; k++)
-                avg_strat[j->first][k] += j->second[k];
+                sum_strat[j->first][k] += j->second[k];
         }
         string history;
         shuffle(deck.begin(), deck.end(), g);
@@ -273,9 +270,12 @@ int main() {
             string prev_infoset = get_infoset(prev_history, am_player1);
             // cout << "PREV HIST " << prev_history << endl;
             for (int j = 0; j < NUM_MOVES; j++) {
-                regrets[prev_infoset][j] += get_sample_value(
+                int lcfrm = 1;
+                if (LCFR)
+                    lcfrm = epochs;
+                regrets[prev_infoset][j] += (get_sample_value(
                     prev_history+action_to_char(j), am_player1)
-                     - utils;
+                    - utils) * lcfrm;
             }
         }
         if (verbose) {
@@ -283,22 +283,56 @@ int main() {
             display_mapping(regrets);
         }
         am_player1 = !am_player1;
+        for (auto &i : sum_strat) {
+            double sum = 0;
+            for (int j = 0; j < i.second.size(); j++)
+                sum += i.second[j];
+            for (int j = 0; j < i.second.size(); j++)
+                avg_strat[i.first][j] = i.second[j] / sum;
+        }
+        if (close_to_nash()) {
+            break;
+        }
     }
-
-    for (auto &i : avg_strat) {
-        double sum = 0;
-        for (int j = 0; j < i.second.size(); j++)
-            sum += i.second[j];
-        for (int j = 0; j < i.second.size(); j++)
-            i.second[j] /= sum;
+    if (epochs == MAX_EPOCHS) {
+        cout << "shit" << endl;
     }
-    cout << fixed << setprecision(2);
-    cout << "FINAL STRAT" << endl;
-    display_mapping(strat);
-    cout << "FINAL REGRETS" << endl;
-    display_mapping(regrets);
-    cout << "AVERAGE STRAT" << endl;
-    display_mapping(avg_strat);
+    // cout << fixed << setprecision(2);
+    // cout << "FINAL STRAT" << endl;
+    // display_mapping(strat);
+    // cout << "FINAL REGRETS" << endl;
+    // display_mapping(regrets);
+    // cout << "AVERAGE STRAT" << endl;
+    // display_mapping(avg_strat);
 
-    cout << close_to_nash() << endl;
+    // cout << "TOOK " << epochs << " EPOCHS TO CONVERGE" << endl;
+
+    // cout << close_to_nash() << endl;
+    return epochs;
+}
+
+int main() {
+    std::random_device rd;
+    std::mt19937 g(rd());
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    srand(seed);
+    cout << fixed << setprecision(3);
+    double sum_basic = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        sum_basic += train(g);
+    }
+    cout << "AVG FOR BASIC: " << sum_basic / SAMPLES << endl;
+    CFR_PLUS = true;
+    double sum_cfr_plus = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        sum_cfr_plus += train(g);
+    }
+    cout << "AVG FOR CFR PLUS: " << sum_cfr_plus / SAMPLES << endl;
+    CFR_PLUS = false;
+    LCFR = true;
+    double sum_lcfr = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        sum_lcfr += train(g);
+    }
+    cout << "AVG FOR LCFR PLUS: " << sum_lcfr / SAMPLES << endl;
 }
